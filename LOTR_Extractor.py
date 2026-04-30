@@ -34,7 +34,9 @@ all_batch_results = []  # List of lists of dictionaries
 BATCH_SIZE = 64
 
 # Alias Dictionary
-alias = {}
+alias = {
+    # Alias : Main name
+}
 # WILL BE INCLUDED LATER
 
 # =============================== PHASE 2/3/4 ===============================
@@ -50,20 +52,21 @@ def add_node(entity):
     node_data.append(new_node)
     return
 
-def add_edge(pair):
+def add_edge(pair, context, source_document):
     global edge_data
     new_edge = {
         "Source": pair[0],
         "Target": pair[1],
         "Label": "",
         "Type": "Undirected",
-        "Context": "",
+        "Context": context,
+        "Source_Document": source_document,
         "Weight": 1
     }
     edge_data.append(new_edge)
     return
 
-def execute_GLiNER():
+def execute_GLiNER(source_document):
     global batch_queue, edge_data
 
     # 1. Grab raw data
@@ -72,7 +75,7 @@ def execute_GLiNER():
     # Example: [] -> [ {"text": "Frodo", "label": "person", "score": 0.99} , ...]
 
     # 2. Loop through the list of list
-    for window_entities in batch_results:
+    for i, window_entities in enumerate(batch_results):
         valid_characters = []
 
     # 3. Loop through the list of dictionaries
@@ -88,9 +91,9 @@ def execute_GLiNER():
                 add_node(raw_name)
         unique_chars = sorted(set(valid_characters))
         if len(unique_chars) >= 2:
-            edges = itertools.combinations(unique_chars, 2)
+            edges = itertools.combinations(unique_chars, 2) # pair[0] = person      pair[1] = person
             for pair in edges:
-                add_edge(pair)
+                add_edge(pair, batch_queue[i], source_document)
 
     # 4. Cleanup
     batch_queue.clear()
@@ -126,10 +129,10 @@ def LOTR_Extractor():
                             batch_queue.append(gliner_window)
             # 4. NER Extract (if applicable)         
                 if len(batch_queue) >= BATCH_SIZE:  # Prevents stack overflow
-                    execute_GLiNER()
+                    execute_GLiNER(text.name)
             # 5. Final NER Extract (for remainder)
             if len(batch_queue) > 0:
-                execute_GLiNER()
+                execute_GLiNER(text.name)
         
     print(f"Finished reading {text.name}")
 

@@ -27,8 +27,8 @@ WINDOW_SIZE = 50
 STRIDE = 5
 
 # GLiNER
-model = GLiNER.from_pretrained("urchade/gliner_medium-v2.1").to("cuda")
-labels = ["person", "description"]
+model = GLiNER.from_pretrained("urchade/gliner_medium-v2.1")
+labels = ["person", "organization", "place", "description"]
 batch_queue = []
 all_batch_results = []  # List of lists of dictionaries
 BATCH_SIZE = 64
@@ -100,41 +100,77 @@ def execute_GLiNER(source_document):
     return
 
 def LOTR_Extractor():
-    for text in directory_LOTR.glob("*.txt"):
+    # for text in directory_LOTR.glob("*.txt"):
+    #     # Initialize
+    #     print("============ NEXT BOOK ============")
+    #     window = deque(maxlen=WINDOW_SIZE)
+    #     word_counter = 0
+
+    #     # Start reading
+    #     with open(text, 'r', encoding='cp1252') as file:
+    #         for line in file:
+    #         # 1. Check if line matches chapter_pattern, if so, start fresh
+    #             if chapter_pattern.search(line):
+    #                 window.clear()
+    #                 word_counter = 0
+    #                 continue
+
+    #             words = line.split()    # Splits every word and placed in a list
+    #             for word in words:
+
+    #         # 2. Fill the window, slides the deque
+    #                 window.append(word)     # Will automatically remove old words
+    #                 word_counter += 1
+
+    #         # 3. Stride Trigger (Gliner)
+    #                 if len(window) == WINDOW_SIZE:
+    #                     if word_counter % STRIDE == 0:  # Checks if 5 word passed
+    #                         gliner_window = " ".join(window)
+    #                         batch_queue.append(gliner_window)
+    #         # 4. NER Extract (if applicable)         
+    #             if len(batch_queue) >= BATCH_SIZE:  # Prevents stack overflow
+    #                 execute_GLiNER(text.name)
+    #         # 5. Final NER Extract (for remainder)
+    #         if len(batch_queue) > 0:
+    #             execute_GLiNER(text.name)
+
+ with open('example.txt', 'r', encoding='cp1252') as file:
         # Initialize
-        print("============ NEXT BOOK ============")
+        print("============ READING BOOK ============")
         window = deque(maxlen=WINDOW_SIZE)
         word_counter = 0
 
         # Start reading
-        with open(text, 'r', encoding='cp1252') as file:
-            for line in file:
-            # 1. Check if line matches chapter_pattern, if so, start fresh
-                if chapter_pattern.search(line):
-                    window.clear()
-                    word_counter = 0
-                    continue
+        for line in file:
+        # 1. Check if line matches chapter_pattern, if so, start fresh
+            if chapter_pattern.search(line):
+                window.clear()
+                word_counter = 0
+                continue
 
-                words = line.split()    # Splits every word and placed in a list
-                for word in words:
+            words = line.split()    # Splits every word and placed in a list
+            for word in words:
 
-            # 2. Fill the window, slides the deque
-                    window.append(word)     # Will automatically remove old words
-                    word_counter += 1
+        # 2. Fill the window, slides the deque
+                window.append(word)     # Will automatically remove old words
+                word_counter += 1
 
-            # 3. Stride Trigger (Gliner)
-                    if len(window) == WINDOW_SIZE:
-                        if word_counter % STRIDE == 0:  # Checks if 5 word passed
-                            gliner_window = " ".join(window)
-                            batch_queue.append(gliner_window)
-            # 4. NER Extract (if applicable)         
-                if len(batch_queue) >= BATCH_SIZE:  # Prevents stack overflow
-                    execute_GLiNER(text.name)
-            # 5. Final NER Extract (for remainder)
-            if len(batch_queue) > 0:
-                execute_GLiNER(text.name)
+        # 3. Stride Trigger (Gliner)
+                if len(window) == WINDOW_SIZE:
+                    if word_counter % STRIDE == 0:  # Checks if 5 word passed
+                        gliner_window = " ".join(window)
+                        batch_queue.append(gliner_window)
+        # 4. NER Extract (if applicable)         
+            if len(batch_queue) >= BATCH_SIZE:  # Prevents stack overflow
+                execute_GLiNER(file.name)
+        # 5. Final NER Extract (for remainder)
+        if len(batch_queue) > 0:
+            execute_GLiNER(file.name)
+
+        print(edge_data)
+        print(node_data)
         
-    print(f"Finished reading {text.name}")
+    # print(f"Finished reading {text.name}")
 
 if __name__ == "__main__":
     LOTR_Extractor()

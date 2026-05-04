@@ -20,7 +20,7 @@ directory_LOTR = Path(r"C:\Users\Azn\Focused\NPS_LOTR_Extractor\LOTR-Extractor\L
 # Data Variables
 node_data = {}  # {ID:Attribute} {str:dir}
 edge_data = {}
-valid_characters = []
+added_entities = []
 
 # Patterns
 chapter_pattern = regex.compile(r"_Chapter\s\d+_")     # _Chapter 00_
@@ -105,7 +105,7 @@ exceptions = [
 # ==============================================================================
 
 def execute_GLiNER(batch_queue, book_vol, chapter):
-    global edge_data, valid_characters
+    global edge_data, added_entities
 
     # 1. Grab raw data
     batch_results = model.inference(batch_queue, labels, threshold=0.5, batch_size=len(batch_queue))
@@ -113,44 +113,40 @@ def execute_GLiNER(batch_queue, book_vol, chapter):
 
     #  ================================ TODO: Work on Nodes first ================================
 
-    for i, window_entities in enumerate(batch_results):
+    for window_entities in batch_results:
         for entity_dict in window_entities:
             name = entity_dict["text"].lower()
+            name = alias.get(name, name).lower()    # Check for alias
+
+            # TODO: Add a condition if the confidence score is low, reject it?
 
             # Catch false entities
             if name in exceptions:
                 continue
 
             # Update existing entity
-            if name in valid_characters:
-                new_attribute = node_data[name].values
-                new_attribute['Last_Apperance'] = entity_dict['end']
-                new_attribute['Reference_Count'] += 1
-                node_data[name] = new_attribute
-                continue
-
-            if name in alias:
-                new_attribute = node_data[name].values
-                new_attribute['Last_Apperance'] = entity_dict['end']
+            if name in added_entities:
+                new_attribute = node_data[name].copy()
+                new_attribute['Last_Apperance'] = f"Book {book_vol}, Chapter {chapter}"
                 new_attribute['Reference_Count'] += 1
                 node_data[name] = new_attribute
                 continue
 
             # Create new entity
             attribute = {}
-            attribute['Node_type'] = entity_dict['label']
-            attribute['ID'] = (entity_dict['label'][:3] + " " + entity_dict["text"]).replace(" ", "_").upper()
-            attribute['Description'] = '[N/A]'
-            if name in alias:
-                attribute['Label'] = alias[name]
+            attribute['Node_type'] = entity_dict['label']       # Node_Type
+            if entity_dict['label'] == "EVENT":                 # Label
+                attribute['ID'] = ("EVT" + " " + name).replace(" ", "_").upper()
             else:
-                attribute['Label'] = entity_dict["text"]
-            attribute['Reference_Count'] = 1
-            attribute['First_Apperance'] = f"Book {book_vol}, Chapter {chapter}"
-            attribute['Last_Apperance'] = f"Book {book_vol}, Chapter {chapter}"
-            attribute['Confidence'] = round(entity_dict['score'], 2)
+                attribute['ID'] = (entity_dict['label'][:3] + " " + name).replace(" ", "_").upper()
+            attribute['Description'] = '[N/A]'                  # Description
+            attribute['Label'] = name
+            attribute['Reference_Count'] = 1                    # Reference Count
+            attribute['First_Apperance'] = f"Book {book_vol}, Chapter {chapter}"    # First_Apperance
+            attribute['Last_Apperance'] = f"Book {book_vol}, Chapter {chapter}"     # Last_Apperance
+            attribute['Confidence'] = round(entity_dict['score'], 2)                # Confidence
 
-            valid_characters.append(name)
+            added_entities.append(name)                         # Prevent's duplicates
             node_data[name] = attribute
 
     #  ================================ TODO: Work on Edges last ================================
@@ -171,9 +167,11 @@ def execute_GLiNER(batch_queue, book_vol, chapter):
     return
 
 def LOTR_Extractor():
+    global chapter, book_vol
+
     # for text in directory_LOTR.glob("*.txt"): # Keep for recursive NER per file
     # =================== Initialize ===================
-    text = r"example.txt"
+    text = r"test.txt"
     print("\n============ READING BOOK ============")
     window = deque(maxlen=WINDOW_SIZE)
     word_counter = 0

@@ -1,10 +1,13 @@
 # LOTR Extractor — Project Context
 
 ## User-Goal
-Let the user work on the problems themselves first. Treat it as a learning experience so the user can learn from issues that may arise. 
-Claude may provide hints and clues as to what is happening, but should never give write direct code unless otherwise prompted to. 
-If Claude feels the need to do so due to a clear syntax error or a problem that is isn't as important to learn about, 
-then Claude may ask the user if they can provide an answer.
+Let the user work on the problems themselves first. Treat it as a learning experience so the user can learn from issues that may arise.
+When pointing out a problem: first explain clearly what is going wrong and why, then give one subtle nudge toward the fix — but do not state the answer directly.
+Claude may never write direct code unless explicitly prompted to by the user.
+If Claude feels the need to do so due to a clear syntax error or a problem that isn't important to learn about, then Claude may ask the user if they can provide an answer.
+
+## Token Safety
+Before performing any task that would consume a significant number of tokens (e.g. reading large files, loading long outputs into context, bulk processing), Claude must first warn the user and explain why it would be expensive, then wait for explicit confirmation before proceeding. If in doubt, do not proceed.
 
 ## Project-Goal
 Build a knowledge graph extraction pipeline for the Lord of the Rings book series.

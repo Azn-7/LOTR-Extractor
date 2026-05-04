@@ -4,19 +4,30 @@ import regex
 from collections import deque
 from pathlib import Path
 import itertools
+import torch
+import Extractor_Utils
 
+# ==============================================================================
 # =============================== CONFIGURATION ===============================
+# ==============================================================================
 
 directory_LOTR = Path(r"C:\Users\Azn\Focused\NPS_LOTR_Extractor\LOTR-Extractor\LOTR_Text")
 
-# =============================== PHASE 1 ===============================
+# ==============================================================================
+# =============================== INITALIZATION ===============================
+# ==============================================================================
 
 # Data Variables
-node_data = []
-edge_data = []
+node_data = {}  # {ID:Attribute} {str:dir}
+edge_data = {}
+valid_characters = []
 
 # Patterns
 chapter_pattern = regex.compile(r"_Chapter\s\d+_")     # _Chapter 00_
+
+# Apperance Tracker
+book_vol = 0
+chapter = 0
 
 # OTHER
 txt_LOTR = ""
@@ -27,150 +38,186 @@ WINDOW_SIZE = 50
 STRIDE = 5
 
 # GLiNER
-model = GLiNER.from_pretrained("urchade/gliner_medium-v2.1")
-labels = ["person", "organization", "place", "description"]
+model = GLiNER.from_pretrained("urchade/gliner_medium-v2.1").to('cuda')
+labels = ["PERSON", "ORGANIZATION", "LOCATION", "EVENT"]
 batch_queue = []
 all_batch_results = []  # List of lists of dictionaries
 BATCH_SIZE = 64
 
 # Alias Dictionary
 alias = {
-    # Alias : Main name
+    # Alias : Main name (key is lowercase alias, value is canonical full name)
+    "bilbo": "Bilbo Baggins",
+    "mr. bilbo": "Bilbo Baggins",
+    "mr. bilbo baggins": "Bilbo Baggins",
+    "uncle bilbo": "Bilbo Baggins",
+    "mr. baggins": "Bilbo Baggins",
+    "frodo": "Frodo Baggins",
+    "mr. frodo": "Frodo Baggins",
+    "poor mr. frodo": "Frodo Baggins",
+    "gandalf": "Gandalf the Grey",
+    "gandalf the wizard": "Gandalf the Grey",
+    "the wizard": "Gandalf the Grey",
+    "old wizard": "Gandalf the Grey",
+    "gaffer": "Old Gaffer Gamgee",
+    "the gaffer": "Old Gaffer Gamgee",
+    "old ham gamgee": "Old Gaffer Gamgee",
+    "master hamfast": "Old Gaffer Gamgee",
+    "sam": "Sam Gamgee",
+    "knowledgeable sam": "Sam Gamgee",
+    "merry": "Merry Brandybuck",
+    "old rory": "Rory Brandybuck",
+    "old rory brandybuck": "Rory Brandybuck",
+    "rory": "Rory Brandybuck",
+    "otho": "Otho Sackville-Baggins",
+    "lobelia": "Lobelia Sackville-Baggins",
+    "drogo": "Drogo Baggins",
+    "mr. drogo": "Drogo Baggins",
+    "mr. drogo baggins": "Drogo Baggins",
+    "miss primula": "Miss Primula Brandybuck",
+    "old took": "Old Took",
+    "took": "Old Took",
+    "odo": "Odo Proudfoot",
+    "old odo proudfoot": "Odo Proudfoot",
+    "sancho": "Sancho Proudfoot",
+    "young sancho proudfoot": "Sancho Proudfoot",
+    "proudfoot": "Odo Proudfoot",
 }
-# WILL BE INCLUDED LATER
 
-# =============================== PHASE 2/3/4 ===============================
+exceptions = [
+    # Pronouns
+    "he", "him", "they", "she", "her", "i", "you", "me", "my", "his", "your", "it", "were",
+    "he escorted her",
+    # Generic roles
+    "local legend", "miller", "the miller", "friend", "stranger", "the stranger",
+    "visitor", "host", "their host", "person", "somebody", "young fellow",
+    "old man", "an old man", "the old man", "people", "some people", "other people",
+    "all and sundry", "his guests", "everyone", "cooks", "postman",
+    "voluntary assistant postmen", "knowledgeable", "old", "gross",
+    # Artifacts / incomplete
+    "mr.", "announcement_", "morning_",
+    # Misclassified
+    "bucklanders", "shire-folk", "chief table", "boats",
+]
 
-def add_node(entity):
-    global node_data
-    new_node = {
-        "node_type": "",
-        "Label": entity,
-        "ID": "",
-        "Description": "",
-    }
-    node_data.append(new_node)
-    return
+# ==============================================================================
+# ==============================================================================
+# ==============================================================================
 
-def add_edge(pair, context, source_document):
-    global edge_data
-    new_edge = {
-        "Source": pair[0],
-        "Target": pair[1],
-        "Label": "",
-        "Type": "Undirected",
-        "Context": context,
-        "Source_Document": source_document,
-        "Weight": 1
-    }
-    edge_data.append(new_edge)
-    return
-
-def execute_GLiNER(source_document):
-    global batch_queue, edge_data
+def execute_GLiNER(batch_queue, book_vol, chapter):
+    global edge_data, valid_characters
 
     # 1. Grab raw data
-    batch_results = model.batch_predict_entities(batch_queue, labels, threshold=0.5)
-    # Output: List -> List -> Dictionaries
-    # Example: [] -> [ {"text": "Frodo", "label": "person", "score": 0.99} , ...]
+    batch_results = model.inference(batch_queue, labels, threshold=0.5, batch_size=len(batch_queue))
+    # Output: List of list of Dictionaries
 
-    # 2. Loop through the list of list
+    #  ================================ TODO: Work on Nodes first ================================
+
     for i, window_entities in enumerate(batch_results):
-        valid_characters = []
-
-    # 3. Loop through the list of dictionaries
         for entity_dict in window_entities:
-            if entity_dict["label"] == "person":
-                raw_name = entity_dict["text"]
+            name = entity_dict["text"].lower()
 
-                raw_name = raw_name.lower()
-                # Alias Check
-                if raw_name in alias:
-                    raw_name = alias[raw_name]
-                valid_characters.append(raw_name)
-                add_node(raw_name)
-        unique_chars = sorted(set(valid_characters))
-        if len(unique_chars) >= 2:
-            edges = itertools.combinations(unique_chars, 2) # pair[0] = person      pair[1] = person
-            for pair in edges:
-                add_edge(pair, batch_queue[i], source_document)
+            # Catch false entities
+            if name in exceptions:
+                continue
+
+            # Update existing entity
+            if name in valid_characters:
+                new_attribute = node_data[name].values
+                new_attribute['Last_Apperance'] = entity_dict['end']
+                new_attribute['Reference_Count'] += 1
+                node_data[name] = new_attribute
+                continue
+
+            if name in alias:
+                new_attribute = node_data[name].values
+                new_attribute['Last_Apperance'] = entity_dict['end']
+                new_attribute['Reference_Count'] += 1
+                node_data[name] = new_attribute
+                continue
+
+            # Create new entity
+            attribute = {}
+            attribute['Node_type'] = entity_dict['label']
+            attribute['ID'] = (entity_dict['label'][:3] + " " + entity_dict["text"]).replace(" ", "_").upper()
+            attribute['Description'] = '[N/A]'
+            if name in alias:
+                attribute['Label'] = alias[name]
+            else:
+                attribute['Label'] = entity_dict["text"]
+            attribute['Reference_Count'] = 1
+            attribute['First_Apperance'] = f"Book {book_vol}, Chapter {chapter}"
+            attribute['Last_Apperance'] = f"Book {book_vol}, Chapter {chapter}"
+            attribute['Confidence'] = round(entity_dict['score'], 2)
+
+            valid_characters.append(name)
+            node_data[name] = attribute
+
+    #  ================================ TODO: Work on Edges last ================================
+            # unique_chars = sorted(set(valid_characters))
+        # if len(unique_chars) >= 2:
+        #     edges = itertools.combinations(unique_chars, 2) # pair[0] = person      pair[1] = person
+        #     for pair in edges:
+        #         source = pair[0]
+        #         target = pair[1]
+        #         label = '[N/A]'
+        #         context = batch_queue[i]
+        #         weight = 1
+
+        #         add_edge(source, target, label, type, context, source_document, weight)
 
     # 4. Cleanup
     batch_queue.clear()
     return
 
 def LOTR_Extractor():
-    # for text in directory_LOTR.glob("*.txt"):
-    #     # Initialize
-    #     print("============ NEXT BOOK ============")
-    #     window = deque(maxlen=WINDOW_SIZE)
-    #     word_counter = 0
+    # for text in directory_LOTR.glob("*.txt"): # Keep for recursive NER per file
+    # =================== Initialize ===================
+    text = r"example.txt"
+    print("\n============ READING BOOK ============")
+    window = deque(maxlen=WINDOW_SIZE)
+    word_counter = 0
+    # ==================================================
 
-    #     # Start reading
-    #     with open(text, 'r', encoding='cp1252') as file:
-    #         for line in file:
-    #         # 1. Check if line matches chapter_pattern, if so, start fresh
-    #             if chapter_pattern.search(line):
-    #                 window.clear()
-    #                 word_counter = 0
-    #                 continue
-
-    #             words = line.split()    # Splits every word and placed in a list
-    #             for word in words:
-
-    #         # 2. Fill the window, slides the deque
-    #                 window.append(word)     # Will automatically remove old words
-    #                 word_counter += 1
-
-    #         # 3. Stride Trigger (Gliner)
-    #                 if len(window) == WINDOW_SIZE:
-    #                     if word_counter % STRIDE == 0:  # Checks if 5 word passed
-    #                         gliner_window = " ".join(window)
-    #                         batch_queue.append(gliner_window)
-    #         # 4. NER Extract (if applicable)         
-    #             if len(batch_queue) >= BATCH_SIZE:  # Prevents stack overflow
-    #                 execute_GLiNER(text.name)
-    #         # 5. Final NER Extract (for remainder)
-    #         if len(batch_queue) > 0:
-    #             execute_GLiNER(text.name)
-
- with open('example.txt', 'r', encoding='cp1252') as file:
-        # Initialize
-        print("============ READING BOOK ============")
-        window = deque(maxlen=WINDOW_SIZE)
-        word_counter = 0
-
+    with open(text, 'r', encoding='cp1252') as file:
         # Start reading
         for line in file:
-        # 1. Check if line matches chapter_pattern, if so, start fresh
             if chapter_pattern.search(line):
                 window.clear()
                 word_counter = 0
+                chapter += 1
                 continue
-
             words = line.split()    # Splits every word and placed in a list
-            for word in words:
 
-        # 2. Fill the window, slides the deque
+            for word in words:
                 window.append(word)     # Will automatically remove old words
                 word_counter += 1
-
-        # 3. Stride Trigger (Gliner)
                 if len(window) == WINDOW_SIZE:
                     if word_counter % STRIDE == 0:  # Checks if 5 word passed
                         gliner_window = " ".join(window)
-                        batch_queue.append(gliner_window)
-        # 4. NER Extract (if applicable)         
-            if len(batch_queue) >= BATCH_SIZE:  # Prevents stack overflow
-                execute_GLiNER(file.name)
-        # 5. Final NER Extract (for remainder)
-        if len(batch_queue) > 0:
-            execute_GLiNER(file.name)
+                        batch_queue.append(gliner_window)    
 
-        print(edge_data)
-        print(node_data)
-        
-    # print(f"Finished reading {text.name}")
+            if len(batch_queue) >= BATCH_SIZE:  # Prevents stack overflow
+                print(f"Executing batch! Batch size is {len(batch_queue)}")
+                execute_GLiNER(batch_queue, book_vol, chapter)
+
+        if len(batch_queue) > 0:
+            print(f"Executing last batch! Batch size is {len(batch_queue)}")
+            execute_GLiNER(batch_queue, book_vol, chapter)
+    print(f"Finished reading {text}")
+
+    # =================== OUTPUT ===================
+    # with open("edges.txt", "w") as file: 
+    #     if edge_data:  
+    #         for edge in edge_data:
+    #             file.write(str(edge) + "\n")
+    with open("nodes.txt", "w") as file:
+        if node_data:
+            file.write(",".join(next(iter(node_data.values())).keys()) + "\n")     # Header
+            for node in node_data.values():
+                file.write(",".join(str(value) for value in node.values()) + "\n")  # Nodes
+                
+    # =============================================
 
 if __name__ == "__main__":
     LOTR_Extractor()

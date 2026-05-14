@@ -118,7 +118,9 @@ def execute_GLiNER(batch_queue, book_vol, chapter):
             name = entity_dict["text"].lower()
             name = alias.get(name, name).lower()    # Check for alias
 
-            # TODO: Add a condition if the confidence score is low, reject it?
+            # Low confidence score -> Rejected
+            if entity_dict['score'] < 50:
+                continue
 
             # Catch false entities
             if name in exceptions:

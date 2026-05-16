@@ -210,4 +210,7 @@ def deduplicate_entities(node_data: dict) -> dict:
 
         cleaned[canonical_key] = merged_attrs
 
-    return cleaned
+    # Build a flat remapping: every original key → its canonical key
+    key_map = {k: find(k) for k in keys}
+
+    return cleaned, key_map

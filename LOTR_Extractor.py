@@ -12,18 +12,20 @@ try:
     from dedup_utils import deduplicate_entities
 except ImportError:
     def deduplicate_entities(nd):
-        return nd
+        return nd, {}
 
 # ==============================================================================
 # =============================== CONFIGURATION ================================
 # ==============================================================================
 
 directory_LOTR = Path(r"C:\Coding\LOTR-Extractor\LOTR_Text")
-TEST_MODE = True         # Set to False to process all LOTR_Text files
+TEST_MODE = False        # Set to False to process all LOTR_Text files
 GENERATE_DESCRIPTIONS = False  # Set to False to skip Ollama and write [N/A] descriptions
 
-OLLAMA_MODEL = "llama3.1:8b"
-OLLAMA_URL   = "http://localhost:11434/api/chat"
+OLLAMA_MODEL  = "llama3.1:8b"
+OLLAMA_URL    = "http://localhost:11434/api/chat"
+MIN_REF_COUNT       = 2   # Minimum occurrences for PERSON, LOCATION, ORGANIZATION
+MIN_EVENT_REF_COUNT = 15  # Higher bar for EVENT — filters vague one-off extractions
 
 # ==============================================================================
 # =============================== INITALIZATION ================================
@@ -47,7 +49,20 @@ STRIDE = 5
 
 # GLiNER
 model = GLiNER.from_pretrained("urchade/gliner_medium-v2.1").to('cuda')
-labels = ["PERSON", "ORGANIZATION", "LOCATION", "EVENT"]
+labels = [
+    "named person or character",
+    "named group, council, or people",
+    "named place, city, region, or landmark",
+    "named historical event or battle",
+]
+
+# Maps verbose GLiNER label text back to the short Node_type stored in node_data
+LABEL_NORMALIZE = {
+    "named person or character":              "PERSON",
+    "named group, council, or people":        "ORGANIZATION",
+    "named place, city, region, or landmark": "LOCATION",
+    "named historical event or battle":       "EVENT",
+}
 batch_queue = []       # list of window strings queued for batch inference
 window_meta = []       # parallel list of (book_vol, chapter) per window
 BATCH_SIZE = 64
@@ -97,6 +112,46 @@ alias = {
     "old mr. bilbo": "Bilbo Baggins",
     "mr. merry": "Merry Brandybuck",
     "old dad": "Old Gaffer Gamgee",
+    # Aliases found in full-text audit
+    "the poor old gaffer": "Old Gaffer Gamgee",
+    "dad": "Old Gaffer Gamgee",
+    "the old took": "Old Took",
+    "the old wizard": "Gandalf the Grey",
+    "the ring-bearer": "Frodo Baggins",
+    "stick-at-naught strider": "Aragorn Son Of Arathorn",
+    "nine servants of the lord of the rings": "Ringwraiths",
+    # Sauron epithets — map verbose canonical and all epithets to clean key
+    "sauron the base master of treachery": "Sauron",
+    "the dark lord": "Sauron",
+    "the nameless enemy": "Sauron",
+    "the necromancer": "Sauron",
+    # Accent-stripped / misextracted characters
+    "owyn": "Éowyn",
+    # Wordy extractions → clean canonical
+    "forlong": "Forlong The Fat",
+    "meriadoc of the shire": "Merry Brandybuck",
+    "lords of the house of eorl the young": "The Rohirrim",
+}
+
+type_overrides = {
+    # Locations misclassified as PERSON by GLiNER
+    "lothlórien":  "LOCATION",
+    "khazad-dûm":  "LOCATION",
+    "amon sûl":    "LOCATION",
+    "o lórien":    "LOCATION",
+    "caradhras":   "LOCATION",
+    "sméagol":     "PERSON",
+    "old butterbur": "PERSON",
+    # Misclassified types found in 3-book audit
+    "owyn":                              "PERSON",    # Éowyn, accent-stripped
+    "eorl":                              "PERSON",    # Eorl the Young
+    "forlong":                           "PERSON",    # Forlong the Fat
+    "paladin of the shire of the halflings": "PERSON",  # Paladin Took II
+    "meriadoc of the shire":             "PERSON",    # Merry Brandybuck
+    "rammas":                            "LOCATION",  # Rammas Echor
+    "halifirien":                        "LOCATION",  # Beacon-hill, Gondor/Rohan border
+    "the fords":                         "LOCATION",  # Fords of Isen
+    "muil":                              "LOCATION",  # Emyn Muil
 }
 
 exceptions = [
@@ -115,10 +170,75 @@ exceptions = [
     "hero", "vote", "aid", "body", "work", "joy", "bane", "raid", "spy", "rear",
     "dusk", "haze", "fort", "grip", "loon", "hiss", "bath", "log", "logs", "ship",
     "hut", "gore", "slot", "dogs", "rams", "heed", "dais", "slab", "foam",
+    # Titles used as standalone entities
+    "sir", "lord", "lady", "king", "queen", "master", "mistress",
+    # Generic PERSON phrases (possessives, roles, fragments)
+    "his companions", "his three companions", "their spirits", "young lord",
+    "my darling", "her lover", "dark heads", "alone", "wraith", "lad",
+    "carpenter", "matriarch", "immortal maiden", "keeper", "firebrand",
+    "bright", "starling", "three large trolls",
+    # Generic "The X" phrases
+    "the forest", "the hedge", "the mirror", "the watch", "the flood",
+    "the porch", "the trail", "the place", "the summit", "the surface",
+    "the brim", "the drift", "the glen", "the spot", "the pile", "a pile",
+    "the ceiling", "the chasm", "the gloom", "the blaze", "the chase",
+    "the alarm", "the ferry", "the watching eyes",
+    # Generic "Old X" / title phrases
+    "old troll", "old wives", "old winyards", "king under the mountain",
+    "queen of the stars",
+    # Fragments (short garbage)
+    "ken", "loo", "s.", "g3", "am", "ii", "hen", "hee", "dol", "tim",
     # Artifacts / incomplete
     "mr.", "announcement_", "morning_",
     # Misclassified
     "bucklanders", "shire-folk", "chief table", "boats",
+    # Generic "The X" / "An X" persons (descriptors, not proper names)
+    "the cow", "the dog", "the figure", "the innkeeper", "the singer",
+    "the thief", "the sun", "the messenger", "the best hobbit",
+    "an elven-maid", "an orc", "the firstborn",
+    # Generic "The X" locations
+    "the house", "the table", "the passage", "the wood",
+    # Generic organization phrases
+    "the others", "my young friends", "my people", "some of my kindred",
+    "her maidens", "his followers", "wise ones", "big and little",
+    "elf-friend", "black rulers", "the audience", "the remnant",
+    "rowans", "shadow", "the local inhabitants", "countrymen", "gardeners",
+    "elders", "companions", "hunters", "exiles", "the scouts", "northern kindred",
+    # High-ref generic descriptors
+    "a collection of local hobbits", "a strong company of orcs",
+    "a squint-eyed ill-favoured fellow",
+    # Short fragments
+    "home", "séa", "edro", "ford", "b.b.",
+    # Vague events
+    "party", "flood", "dark times",
+    # Artifacts misclassified as persons
+    "the silmaril",
+    # Short fragments (3-book audit)
+    "day", "howe", "boys", "ape", "boro", "both", "fey", "hoom", "naur",
+    "sun", "swan", "thou", "yéni", "yule", "garn", "nick",
+    "grã", "cã", "dãºnedain of the north",   # encoding artifacts
+    # Vague events
+    "moot", "shire-reckoning", "new year", "sortie",
+    # Generic PERSON descriptors
+    "the servant of the prince", "the head of the orc-company",
+    "the landlord", "the boss", "the tracker", "the woman", "the host",
+    "the ostler", "the little wretch", "the scout", "the little dog",
+    "the slave-driver", "boromir_you", "the unnamed", "the guide",
+    "the healer", "the haggard king", "the tree-killer", "the evil voice",
+    # Generic ORGANIZATION phrases
+    "my scouts and watchers", "dear friends of the shire", "king of rohan",
+    "ill-mannered children", "others", "his people", "messengers",
+    "ye people of the tower of guard", "orcses", "cruel peoples", "shirefolk",
+    "the watchmen", "the living", "elder people", "your neighbours",
+    "his own people", "healers", "troop-leaders", "the pursuers",
+    "orc-voices", "forayers", "hobbit-lordlings", "close-serried companies",
+    "your servants", "hero of the age", "green-clad warriors", "many peoples",
+    "his counsel", "your people", "the builders of old", "his eye",
+    "the rammers", "trees", "the lembas", "the captains", "thain of the shire",
+    # Generic LOCATION phrases
+    "the common room", "the cleft", "the gateway", "the head of the rapids",
+    "the plain", "the way", "the mouth of the gully", "the nuncheon",
+    "the opening", "the path", "the star-glass",
 ]
 
 # ==============================================================================
@@ -168,7 +288,7 @@ def execute_GLiNER(batch_queue, window_meta_list, book_vol, chapter):
         window_canonical_names = []
 
         for entity_dict in window_entities:
-            raw_text = entity_dict["text"].strip("_").strip()
+            raw_text = entity_dict["text"].replace(" _", " ").replace("_ ", " ").strip("_").strip()
 
             # Drop sentence fragments and overly long noun phrases
             if len(raw_text) > 40:
@@ -194,16 +314,20 @@ def execute_GLiNER(batch_queue, window_meta_list, book_vol, chapter):
             if name in added_entities:
                 node_data[name]['Last_Apperance'] = f"Book {w_book_vol}, Chapter {w_chapter}"
                 node_data[name]['Reference_Count'] += 1
+                if name in type_overrides:
+                    node_data[name]['Node_type'] = type_overrides[name]
                 window_canonical_names.append(name)
                 continue
 
             # Create new entity
             attribute = {}
-            attribute['Node_type'] = entity_dict['label']
-            if entity_dict['label'] == "EVENT":
+            raw_label = LABEL_NORMALIZE.get(entity_dict['label'], entity_dict['label'])
+            node_type = type_overrides.get(name, raw_label)
+            attribute['Node_type'] = node_type
+            if node_type == "EVENT":
                 attribute['ID'] = ("EVT" + " " + name).replace(" ", "_").upper()
             else:
-                attribute['ID'] = (entity_dict['label'][:3] + " " + name).replace(" ", "_").upper()
+                attribute['ID'] = (node_type[:3] + " " + name).replace(" ", "_").upper()
             attribute['Description'] = '[N/A]'
             attribute['Label'] = canonical_display
             attribute['Reference_Count'] = 1
@@ -243,17 +367,25 @@ def generate_descriptions(node_data: dict) -> dict:
         return node_data
 
     DESC_BATCH = 20
+    invalid_keys = set()
+
     system_prompt = (
-        "You are a literary analyst for Lord of the Rings. "
-        "For each entity, write a single concise sentence describing who or what it is "
-        "based on the provided context window. Focus on the entity's role, relationships, "
-        "and nature — not plot events. Use the format:\n"
-        "entity_key: One-line description.\n\n"
-        "Example:\n"
-        "bilbo baggins: Bilbo Baggins is a well-to-do hobbit who lives at Bag End in the Shire."
+        "You are a literary analyst for Lord of the Rings.\n"
+        "For each entity, decide: is this a real, specifically named entity from Lord of the Rings "
+        "(a named character, place, group, or historical event)? "
+        "Or is it too vague, generic, or not a proper named noun?\n\n"
+        "If it is real and specific, write a single concise sentence describing it.\n"
+        "Use this exact format — one line per entity:\n"
+        "entity_key: VALID One-line description.\n"
+        "entity_key: INVALID\n\n"
+        "Examples:\n"
+        "bilbo baggins: VALID A well-to-do hobbit of the Shire who lives at Bag End and is known for his unexpected adventure.\n"
+        "the old man: INVALID\n"
+        "the war of the ring: VALID The great conflict between the Free Peoples of Middle-earth and Sauron's forces of Mordor.\n"
+        "the meeting: INVALID"
     )
 
-    for i in tqdm(range(0, len(entities), DESC_BATCH), desc="  Describing entities", unit="batch"):
+    for i in tqdm(range(0, len(entities), DESC_BATCH), desc="  Validating and describing entities", unit="batch"):
         batch = entities[i : i + DESC_BATCH]
         lines = []
         for key, attrs in batch:
@@ -262,7 +394,7 @@ def generate_descriptions(node_data: dict) -> dict:
                 f"Type: {attrs.get('Node_type', 'ENTITY')}\n"
                 f"Context: {attrs['_context']}"
             )
-        user_msg = "Generate descriptions for these entities:\n\n" + "\n\n---\n\n".join(lines)
+        user_msg = "Validate and describe these entities:\n\n" + "\n\n---\n\n".join(lines)
 
         response = requests.post(
             OLLAMA_URL,
@@ -281,10 +413,21 @@ def generate_descriptions(node_data: dict) -> dict:
         for line in response_text.strip().splitlines():
             if ':' not in line:
                 continue
-            key_part, desc_part = line.split(':', 1)
+            key_part, rest = line.split(':', 1)
             canonical = key_part.strip().lower()
-            if canonical in node_data:
-                node_data[canonical]['Description'] = desc_part.strip()
+            rest = rest.strip()
+            if not rest or canonical not in node_data:
+                continue
+            if rest.upper().startswith('INVALID'):
+                invalid_keys.add(canonical)
+            elif rest.upper().startswith('VALID'):
+                node_data[canonical]['Description'] = rest[5:].strip()
+
+    for key in invalid_keys:
+        node_data.pop(key, None)
+
+    if invalid_keys:
+        print(f"  Removed {len(invalid_keys)} entities flagged as invalid: {', '.join(sorted(invalid_keys))}")
 
     for attrs in node_data.values():
         attrs.pop('_context', None)
@@ -292,7 +435,7 @@ def generate_descriptions(node_data: dict) -> dict:
     return node_data
 
 
-def generate_edge_descriptions(edge_data: dict) -> dict:
+def generate_edge_descriptions(edge_data: dict, deduped_nodes: dict) -> dict:
     edges = [(k, v) for k, v in edge_data.items() if v.get("Weight", 1) >= 2]
 
     if not edges:
@@ -313,10 +456,10 @@ def generate_edge_descriptions(edge_data: dict) -> dict:
         batch = edges[i : i + DESC_BATCH]
         lines = []
         for idx, (key, attrs) in enumerate(batch):
-            src_label = node_data.get(attrs["Source"], {}).get("Label", attrs["Source"])
-            tgt_label = node_data.get(attrs["Target"], {}).get("Label", attrs["Target"])
-            src_type = node_data.get(attrs["Source"], {}).get("Node_type", "ENTITY")
-            tgt_type = node_data.get(attrs["Target"], {}).get("Node_type", "ENTITY")
+            src_label = deduped_nodes.get(attrs["Source"], {}).get("Label", attrs["Source"])
+            tgt_label = deduped_nodes.get(attrs["Target"], {}).get("Label", attrs["Target"])
+            src_type = deduped_nodes.get(attrs["Source"], {}).get("Node_type", "ENTITY")
+            tgt_type = deduped_nodes.get(attrs["Target"], {}).get("Node_type", "ENTITY")
             lines.append(
                 f"Index: {idx}\n"
                 f"Source: {src_label} (Type: {src_type})\n"
@@ -352,6 +495,37 @@ def generate_edge_descriptions(edge_data: dict) -> dict:
                 edge_data[key]["Description"] = desc_part.strip()
 
     return edge_data
+
+
+def _remap_edges(edge_data: dict, key_map: dict) -> None:
+    """
+    Update edge Source/Target keys to their post-deduplication canonical keys.
+    Edges whose endpoints collapse to the same canonical key (self-loops) are
+    removed. Edges that map to the same canonical pair are merged by summing
+    Weight and keeping the highest-confidence context.
+    """
+    for old_key in list(edge_data.keys()):
+        edge = edge_data[old_key]
+        new_src = key_map.get(edge["Source"], edge["Source"])
+        new_tgt = key_map.get(edge["Target"], edge["Target"])
+
+        if new_src == new_tgt:
+            del edge_data[old_key]
+            continue
+
+        edge["Source"] = new_src
+        edge["Target"] = new_tgt
+        new_key = frozenset({new_src, new_tgt})
+
+        if new_key == old_key:
+            continue
+
+        if new_key in edge_data:
+            edge_data[new_key]["Weight"] += edge["Weight"]
+        else:
+            edge_data[new_key] = edge
+
+        del edge_data[old_key]
 
 
 def LOTR_Extractor():
@@ -401,15 +575,44 @@ def LOTR_Extractor():
         print(f"  Finished {text_file_path.name}")
 
     # Deduplication
-    deduped_node_data = deduplicate_entities(node_data)
+    deduped_node_data, key_map = deduplicate_entities(node_data)
+    _remap_edges(edge_data, key_map)
+
+    # Drop nodes below minimum reference count (stricter threshold for EVENTs)
+    deduped_node_data = {
+        k: v for k, v in deduped_node_data.items()
+        if v.get("Reference_Count", 1) >= (
+            MIN_EVENT_REF_COUNT if v.get("Node_type") == "EVENT" else MIN_REF_COUNT
+        )
+    }
+
+    # Purge edges whose endpoints were removed
+    valid_keys = set(deduped_node_data.keys())
+    for key in list(edge_data.keys()):
+        edge = edge_data[key]
+        if edge["Source"] not in valid_keys or edge["Target"] not in valid_keys:
+            del edge_data[key]
+
+    # Refresh edge labels to reflect corrected node types after dedup/type_overrides
+    for edge in edge_data.values():
+        src_type = deduped_node_data.get(edge["Source"], {}).get("Node_type", "UNKNOWN")
+        tgt_type = deduped_node_data.get(edge["Target"], {}).get("Node_type", "UNKNOWN")
+        edge["Label"] = f"{src_type}-{tgt_type}"
 
     # LLM descriptions
     if GENERATE_DESCRIPTIONS:
-        print(f"\nGenerating entity descriptions via Ollama ({OLLAMA_MODEL})...")
+        print(f"\nValidating and describing entities via Ollama ({OLLAMA_MODEL})...")
         deduped_node_data = generate_descriptions(deduped_node_data)
 
+        # Re-clean edges — Ollama may have removed nodes flagged as invalid
+        valid_keys = set(deduped_node_data.keys())
+        for key in list(edge_data.keys()):
+            edge = edge_data[key]
+            if edge["Source"] not in valid_keys or edge["Target"] not in valid_keys:
+                del edge_data[key]
+
         print(f"Generating edge descriptions via Ollama ({OLLAMA_MODEL})...")
-        generate_edge_descriptions(edge_data)
+        generate_edge_descriptions(edge_data, deduped_node_data)
     else:
         print("\nSkipping descriptions (GENERATE_DESCRIPTIONS=False)")
 

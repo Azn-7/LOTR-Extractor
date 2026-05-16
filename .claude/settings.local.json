@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(.venv/Scripts/python.exe -c ' *)"
+      "Bash(.venv/Scripts/python.exe -c ' *)",
+      "PowerShell(\\(Get-Item \"c:\\\\Coding\\\\LOTR-Extractor\\\\nodes.csv\"\\).Length / 1KB)",
+      "PowerShell(\\(Get-Content \"c:\\\\Coding\\\\LOTR-Extractor\\\\nodes.csv\" | Measure-Object -Line\\).Lines)",
+      "PowerShell(Import-Csv \"c:\\\\Coding\\\\LOTR-Extractor\\\\nodes.csv\" | Where-Object { $_.Node_type -eq \"EVENT\" } | Select-Object Label, Reference_Count | Sort-Object { [int]$_.Reference_Count } -Descending | Format-Table -AutoSize)",
+      "PowerShell(Import-Csv \"c:\\\\Coding\\\\LOTR-Extractor\\\\nodes.csv\" | Where-Object { $_.Node_type -eq \"ORGANIZATION\" } | Select-Object Label, Reference_Count | Sort-Object { [int]$_.Reference_Count } -Descending | Format-Table -AutoSize)",
+      "PowerShell(Import-Csv \"c:\\\\Coding\\\\LOTR-Extractor\\\\nodes.csv\" | Where-Object { $_.Label -match \"^[Tt]he \" -or $_.Label -match \"^[Aa]n? \" -or $_.Label -match \"_\" } | Select-Object Label, Node_type, Reference_Count | Sort-Object Node_type, Label | Format-Table -AutoSize)"
     ]
   }
 }

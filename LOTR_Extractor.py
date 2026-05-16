@@ -123,14 +123,32 @@ alias = {
     # Sauron epithets — map verbose canonical and all epithets to clean key
     "sauron the base master of treachery": "Sauron",
     "the dark lord": "Sauron",
+    "dark lord": "Sauron",
     "the nameless enemy": "Sauron",
     "the necromancer": "Sauron",
+    "great enemy": "Sauron",
     # Accent-stripped / misextracted characters
     "owyn": "Éowyn",
     # Wordy extractions → clean canonical
     "forlong": "Forlong The Fat",
     "meriadoc of the shire": "Merry Brandybuck",
     "lords of the house of eorl the young": "The Rohirrim",
+    # Saruman — name rarely extracted directly; aliases from titles/epithets
+    "sharkey": "Saruman",
+    "chief of wizards": "Saruman",
+    # Denethor — extracted via title only
+    "lord of gondor": "Denethor",
+    # Pippin — pin all variants to canonical
+    "pippin": "Peregrin Took",
+    "peregrin": "Peregrin Took",
+    "master took": "Peregrin Took",
+    "pippin took": "Peregrin Took",
+    "master pippin": "Peregrin Took",
+    "master peregrin": "Peregrin Took",
+    "peregrin the halfling": "Peregrin Took",
+    # Merry variants
+    "master merry": "Merry Brandybuck",
+    "old merry": "Merry Brandybuck",
 }
 
 type_overrides = {
@@ -144,14 +162,20 @@ type_overrides = {
     "old butterbur": "PERSON",
     # Misclassified types found in 3-book audit
     "owyn":                              "PERSON",    # Éowyn, accent-stripped
+    "éowyn":                             "PERSON",    # Éowyn, direct extraction
     "eorl":                              "PERSON",    # Eorl the Young
     "forlong":                           "PERSON",    # Forlong the Fat
+    "forlong the fat":                   "PERSON",    # Forlong, full name
     "paladin of the shire of the halflings": "PERSON",  # Paladin Took II
     "meriadoc of the shire":             "PERSON",    # Merry Brandybuck
     "rammas":                            "LOCATION",  # Rammas Echor
     "halifirien":                        "LOCATION",  # Beacon-hill, Gondor/Rohan border
     "the fords":                         "LOCATION",  # Fords of Isen
     "muil":                              "LOCATION",  # Emyn Muil
+    # Characters whose names rarely appear directly
+    "saruman":                           "PERSON",
+    "denethor":                          "PERSON",
+    "peregrin took":                     "PERSON",
 }
 
 exceptions = [
@@ -239,6 +263,23 @@ exceptions = [
     "the common room", "the cleft", "the gateway", "the head of the rapids",
     "the plain", "the way", "the mouth of the gully", "the nuncheon",
     "the opening", "the path", "the star-glass",
+    # Short fragments (second audit)
+    "boss", "ware", "toby",
+    # Generic PERSON phrases (second audit)
+    "the winged messenger", "the wretch", "merry and i",
+    # Generic ORGANIZATION phrases (second audit)
+    "your friends", "scouts", "leaders", "watchmen", "brigands",
+    "those of the east dales", "greathearts of the shire",
+    "ye people of the tower of anor", "people of lã³rien",
+    # Inflated ref-count descriptors (appendix/genealogy passages)
+    "paladin of the shire of the halflings", "the folk of the lonely mountain",
+    "thã©oden lord of the mark of rohan",    # encoding artifact — fixed by utf-8
+    "the butt-end of the misty mountains",   # inflated appendix extraction
+    "the orcs and spies of the enemy",       # inflated appendix extraction
+    # Compound person extractions (multiple characters in one span)
+    "merry and pippin", "sam and pippin", "terrified pippin",
+    # Generic person descriptors
+    "your precious master", "his masters",
 ]
 
 # ==============================================================================
@@ -272,6 +313,19 @@ def _upsert_edge(src, tgt, context, source_document, chapter, book_vol):
 # ==============================================================================
 # ============================== MAIN FUNCTIONS ================================
 # ==============================================================================
+
+def _fix_mojibake(text: str) -> str:
+    """
+    Repair accented characters that were stored as UTF-8 bytes in a cp1252 file.
+    Re-encodes the cp1252 string back to bytes, then decodes as UTF-8.
+    Characters that are native cp1252 (e.g. em dash 0x97) produce invalid UTF-8
+    and are left unchanged.
+    """
+    try:
+        return text.encode('cp1252').decode('utf-8')
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return text
+
 
 def execute_GLiNER(batch_queue, window_meta_list, book_vol, chapter):
     global edge_data, added_entities
@@ -542,6 +596,7 @@ def LOTR_Extractor():
 
         with open(text_file_path, 'r', encoding='cp1252') as file:
             for line in file:
+                line = _fix_mojibake(line)
                 match = chapter_pattern.search(line)
                 if match:
                     new_chapter = int(match.group(1))
@@ -615,6 +670,13 @@ def LOTR_Extractor():
         generate_edge_descriptions(edge_data, deduped_node_data)
     else:
         print("\nSkipping descriptions (GENERATE_DESCRIPTIONS=False)")
+
+    # Build inverted alias map: canonical_key → list of known alias strings
+    alias_inverted: dict[str, list[str]] = {}
+    for alias_key, canonical_val in alias.items():
+        alias_inverted.setdefault(canonical_val.lower(), []).append(alias_key)
+    for key, attrs in deduped_node_data.items():
+        attrs['Aliases'] = ' | '.join(alias_inverted.get(key, []))
 
     # Output
     if deduped_node_data:
